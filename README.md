@@ -8,6 +8,8 @@ Pipeline completo de IA/ML que avalia o paciente **dentro do seu território** �
 ![Streamlit](https://img.shields.io/badge/Deploy-Streamlit-red)
 ![SHAP](https://img.shields.io/badge/Explainability-SHAP-green)
 
+> 🔗 **App em funcionamento:** **<https://medistare.streamlit.app/>**
+
 > ⚠️ **Aviso:** ferramenta de **apoio à decisão clínica**. Não realiza diagnóstico nem substitui o julgamento de profissionais de saúde.
 
 ---
@@ -44,10 +46,10 @@ Em regiões isoladas, o risco real de um caso **não depende apenas dos sintomas
 
 ## 2. Fonte dos dados
 
-Conjunto **sintético** gerado para simular atendimentos de telemedicina em comunidades isoladas brasileiras (atende ao requisito de dataset gerado, com folga sobre o mínimo de 1.000 linhas × 10 colunas).
+O conjunto de dados é **sintético, gerado com IA generativa**. Antes de gerar os registros, a IA foi orientada a **pesquisar referências reais** — faixas fisiológicas de sinais vitais, distâncias e tempos de deslocamento típicos de comunidades isoladas brasileiras, padrões de conectividade via satélite e variáveis ambientais (enchentes, queimadas, chuva) — de modo que os valores e as **correlações entre as variáveis fossem coerentes com a realidade** clínica e territorial, e não números aleatórios sem sentido. Isso atende ao requisito de **dataset criado por IA generativa**, com folga sobre o mínimo de 1.000 linhas × 10 colunas.
 
 - **`medistar_pacientes_telemedicina_sintetico.csv`** — **1.500 linhas × 45 colunas**, 30 comunidades, 16 UFs, **0 valores faltantes**, 0 duplicatas.
-- O rótulo foi derivado de um `score_risco_total` sintético (soma ponderada de fatores) com **faixas de corte fixas** — esse score é **removido** do modelo (ver [Metodologia](#3-metodologia)).
+- O rótulo `prioridade_atendimento` foi derivado de um `score_risco_total` sintético (soma ponderada de fatores de risco) com **faixas de corte fixas** — esse score é **removido** do modelo para evitar vazamento (ver [Metodologia](#3-metodologia)).
 
 **Dicionário (resumo por grupo):**
 
@@ -86,7 +88,10 @@ Investigação documentada no código:
 
 O módulo **`medistar_features.py`** é a **fonte única** dessa transformação, importado tanto no treino quanto no app — eliminando divergência treino/inferência (*training/serving skew*).
 
-### 3.3 Pré-processamento e validação
+### 3.3 Seleção de atributos
+A seleção de variáveis é feita em duas frentes: (a) **remoção criteriosa por vazamento e por ausência de poder preditivo** — sai o `score_risco_total` (vazamento) e saem identificadores/texto livre (`patient_id`, `community_id`, `data_atendimento`, `municipio`, `hospital_referencia`, `codigo_ibge`); e (b) **análise de importância** via `feature_importances_` do Random Forest e via SHAP, que confirma quais variáveis efetivamente sustentam a decisão (território + sinais vitais no topo). As features de baixa contribuição permanecem porque o Random Forest é robusto a ruído/redundância, sem prejuízo de desempenho.
+
+### 3.4 Pré-processamento e validação
 - `ColumnTransformer`: `StandardScaler` (numéricas) + `OneHotEncoder` (categóricas), encapsulado em `Pipeline` (fit **somente** no treino).
 - **44 features** finais (41 numéricas + 3 categóricas) após a engenharia.
 - Split estratificado **75/25** (1.125 treino / 375 teste).
@@ -105,6 +110,8 @@ Cinco técnicas comparadas por validação cruzada (5-fold, F1-macro):
 | Random Forest (base) | 0,715 ± 0,006 |
 | Árvore de Decisão | 0,683 ± 0,022 |
 | KNN | 0,606 ± 0,032 |
+
+![Comparação de modelos (F1-macro, 5-fold CV)](02_comparacao_modelos.png)
 
 **Escolha do modelo final — Random Forest** (otimizado via `GridSearchCV`, F1-macro CV = **0,759**; melhores hiperparâmetros: `n_estimators=300`, `max_features=0.5`, `max_depth=None`, `min_samples_leaf=1`).
 
@@ -137,7 +144,7 @@ Desempenho do modelo final no **conjunto de teste** (375 pacientes nunca vistos)
 - O modelo é **mais preciso justamente na classe mais importante** (`critico_territorial`, F1 0,86).
 - Os erros se concentram entre **classes vizinhas** na escala (ex.: `atencao` ↔ `alta_prioridade`), o tipo de erro menos perigoso — confirmado na matriz de confusão.
 
-Gráficos gerados em `figuras_medistar/`: distribuição do alvo, comparação de modelos, matriz de confusão, curvas ROC, F1 por classe, importância de variáveis e resumo SHAP.
+Rodar `python medistar_modelo.py` regenera o conjunto completo de **7 figuras** na pasta `figuras_medistar/`: distribuição do alvo, comparação de modelos, matriz de confusão, curvas ROC, F1 por classe, importância de variáveis e resumo SHAP.
 
 ---
 
@@ -145,17 +152,18 @@ Gráficos gerados em `figuras_medistar/`: distribuição do alvo, comparação d
 
 Usamos **SHAP** (`TreeExplainer`) em dois níveis:
 
-- **Global** (`figuras_medistar/07_shap_summary.png`): contribuição das features para a classe `critico_territorial`. Pesam mais o **contexto territorial** (`isolamento_geografico`, `tempo_deslocamento`, `indice_acesso`, `distancia_hospital_km`) combinado a sinais clínicos (`spo2_pct`, `escore_alerta_vitais`) — exatamente a tese do Medistar: **o território importa tanto quanto o sintoma**.
+- **Global** (figura abaixo): contribuição das features para a classe `critico_territorial`. Pesam mais o **contexto territorial** (`isolamento_geografico`, `tempo_deslocamento`, `indice_acesso`) combinado a sinais clínicos (`spo2_pct`, `sintoma_dispneia`, `temperatura_c`) — exatamente a tese do Medistar: **o território importa tanto quanto o sintoma**.
 - **Local (no app):** para cada paciente avaliado, o app mostra os fatores que empurraram a decisão para a classe prevista. Validação real (paciente idoso, SpO₂ 86%, isolado, em surto → `critico_territorial`): os principais fatores SHAP foram `isolamento_geografico`, `tempo_deslocamento` e a feature derivada `indice_acesso`.
+
+![Resumo SHAP — contribuição das features para a classe crítico territorial](07_shap_summary.png)
 
 ---
 
 ## 7. Deploy e instruções de execução
 
-A solução é publicada como app **Streamlit** (`app.py`) de **telemedicina domiciliar** — sem deslocamento de equipe. O paciente (ou cuidador) registra sintomas e medições de **dispositivos domésticos / sensores IoT** (oxímetro de dedo, termômetro e, quando disponível, medidor de pressão); território e conectividade vêm da plataforma. Saída: prioridade gerada + confiança + probabilidade por classe + explicação SHAP local. Os sinais vitais que exigem equipamento ficam em grupos opcionais (toggles): se o paciente não tiver oxímetro/termômetro ou medidor de pressão, o modelo prioriza por sintomas + contexto territorial, sinalizando confiabilidade menor.
+A solução é publicada como app **Streamlit** (`app.py`) de **telemedicina domiciliar** — sem deslocamento de equipe. O paciente (ou cuidador) registra sintomas e medições de **dispositivos domésticos / sensores IoT** (oxímetro de dedo, termômetro e, quando disponível, medidor de pressão). Os dados de **território e conectividade** fazem parte do dataset e, no app, ficam **editáveis para simulação** — no produto final viriam automaticamente da plataforma (satélite/sensores), conforme a [seção 10](#10-economia-espacial-e-ods). Saída: prioridade gerada + confiança + probabilidade por classe + explicação SHAP local. Os sinais vitais que exigem equipamento ficam em grupos opcionais (toggles): se o paciente não tiver oxímetro/termômetro ou medidor de pressão, o modelo prioriza por sintomas + contexto territorial, sinalizando confiabilidade menor.
 
-🔗 **Aplicação em funcionamento:** `https://SEU-APP.streamlit.app`
-*(substitua pelo seu link após o deploy no Streamlit Community Cloud)*
+🔗 **Aplicação em funcionamento:** **<https://medistare.streamlit.app/>**
 
 ### Execução local
 ```bash
@@ -169,29 +177,24 @@ python medistar_modelo.py
 # 3. Subir o app
 streamlit run app.py
 ```
-
-### Deploy no Streamlit Community Cloud (gratuito)
-1. Suba o repositório no GitHub **incluindo** `medistar_modelo.joblib` e `medistar_features.py`.
-2. Acesse <https://share.streamlit.io> → **New app** → selecione o repo e `app.py`.
-3. Cole a URL gerada no campo acima.
-
-> Dica: as versões em `requirements.txt` são as testadas. O `.joblib` foi serializado com `scikit-learn 1.8.0` — manter a versão evita conflito ao carregar o modelo.
-
 ---
 
 ## 8. Estrutura do repositório
 
 ```
-medistar/
+.
+├── app.py                                          # aplicação Streamlit (deploy)
 ├── medistar_modelo.py                              # treino + avaliação + serialização
 ├── medistar_features.py                            # engenharia de atributos (treino + app)
-├── app.py                                          # aplicação Streamlit (deploy)
 ├── medistar_modelo.joblib                          # modelo treinado + schema de inferência
-├── medistar_pacientes_telemedicina_sintetico.csv   # dataset sintético
+├── medistar_pacientes_telemedicina_sintetico.csv   # dataset sintético (gerado por IA)
 ├── requirements.txt
-├── figuras_medistar/                               # gráficos da avaliação (gerados)
+├── 02_comparacao_modelos.png                       # figura: comparação de modelos
+├── 07_shap_summary.png                             # figura: resumo SHAP (classe crítica)
 └── README.md
 ```
+
+> Ao rodar `python medistar_modelo.py`, a pasta `figuras_medistar/` é criada com o conjunto completo das 7 figuras da avaliação.
 
 ---
 
@@ -206,6 +209,8 @@ medistar/
 ## 10. Economia Espacial e ODS
 
 **Conexão com a Indústria Espacial:** o Medistar depende de ativos orbitais para funcionar em regiões sem infraestrutura terrestre — **conectividade via satélite** (transmissão de sinais vitais e sincronização), **dados geoespaciais** (`latitude`/`longitude`, isolamento, distância), e **sensoriamento remoto** para variáveis ambientais (`risco_enchente`, `focos_queimada`, `chuva_7d_mm`). É um caso de tecnologia espacial resolvendo um problema na Terra.
+
+> **Escopo deste trabalho:** neste MVP, as fontes espaciais são **representadas pelo dataset sintético** (que codifica distância, isolamento, conectividade, risco de enchente etc.). A **integração automática** com satélite/sensoriamento remoto é a **arquitetura-alvo do produto** — não uma funcionalidade implementada aqui. O foco da entrega é o **pipeline de IA/ML**: dados → pré-processamento → modelos → validação → SHAP → deploy.
 
 **ODS:** 3 (Saúde e Bem-Estar) · 9 (Indústria, Inovação e Infraestrutura) · 10 (Redução das Desigualdades) · 11 (Comunidades Sustentáveis) · 13 (Ação Climática).
 
