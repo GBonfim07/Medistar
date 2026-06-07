@@ -53,7 +53,7 @@ from sklearn.metrics import (accuracy_score, precision_recall_fscore_support,
 import shap
 
 # Engenharia de atributos compartilhada com o app de deploy
-from src.medistar_features import (engineer_features, get_feature_lists, ORDEM,
+from medistar_features import (engineer_features, get_feature_lists, ORDEM,
                                TARGET, LEAKAGE, IDS, CAT_FEATURES, SINTOMAS,
                                FEATURES_DERIVADAS)
 
