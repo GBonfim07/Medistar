@@ -90,6 +90,8 @@ O módulo **`medistar_features.py`** é a **fonte única** dessa transformação
 
 ### 3.3 Seleção de atributos
 A seleção de variáveis é feita em duas frentes: (a) **remoção criteriosa por vazamento e por ausência de poder preditivo** — sai o `score_risco_total` (vazamento) e saem identificadores/texto livre (`patient_id`, `community_id`, `data_atendimento`, `municipio`, `hospital_referencia`, `codigo_ibge`); e (b) **análise de importância** via `feature_importances_` do Random Forest e via SHAP, que confirma quais variáveis efetivamente sustentam a decisão (território + sinais vitais no topo). As features de baixa contribuição permanecem porque o Random Forest é robusto a ruído/redundância, sem prejuízo de desempenho.
+Observação sobre a SpO₂:
+A saturação de oxigênio (`spo2_pct`) possui forte influência no modelo porque representa um sinal clínico crítico, especialmente em quadros respiratórios. Mesmo quando o contexto territorial é favorável, uma SpO₂ muito baixa pode elevar a prioridade do atendimento. Nesse caso, a classe `critico_territorial` deve ser interpretada como uma prioridade crítica clínico-territorial: a decisão considera o paciente e o território, mas sinais clínicos graves podem, isoladamente, justificar alta prioridade.
 
 ### 3.4 Pré-processamento e validação
 - `ColumnTransformer`: `StandardScaler` (numéricas) + `OneHotEncoder` (categóricas), encapsulado em `Pipeline` (fit **somente** no treino).
